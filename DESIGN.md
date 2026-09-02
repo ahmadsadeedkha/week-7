@@ -21,3 +21,65 @@ member's role on that project (owner / admin / member / viewer).
   take writes down for more than 30 seconds.
 - NFR3: No API response ever includes `password_hash`, and every write or role-restricted
   read is authorized against the caller's `project_members` role before it executes.
+
+## 2. Entity-Relationship Diagram
+
+```mermaid
+erDiagram
+    USERS ||--o{ PROJECTS : owns
+    USERS ||--o{ PROJECT_MEMBERS : "has membership"
+    USERS ||--o{ TASKS : "assigned to"
+    USERS ||--o{ COMMENTS : writes
+    PROJECTS ||--o{ PROJECT_MEMBERS : has
+    PROJECTS ||--o{ TASKS : contains
+    TASKS ||--o{ COMMENTS : has
+    TASKS ||--o{ TASK_TAGS : "tagged via"
+    TAGS ||--o{ TASK_TAGS : "applied via"
+
+    USERS {
+        int id PK
+        string name
+        string email UK "NOT NULL"
+        datetime created_at
+    }
+    PROJECTS {
+        int id PK
+        string name "NOT NULL"
+        int owner_id FK "-> users.id, NOT NULL"
+        datetime created_at
+    }
+    PROJECT_MEMBERS {
+        int user_id FK "-> users.id, PK part"
+        int project_id FK "-> projects.id, PK part"
+        string role "owner/admin/member/viewer, NOT NULL"
+    }
+    TASKS {
+        int id PK
+        string title "NOT NULL"
+        string description
+        string status "todo/in_progress/done"
+        int priority "1-5"
+        int project_id FK "-> projects.id, NOT NULL"
+        int assignee_id FK "-> users.id, NULLABLE"
+        date due_date
+        datetime created_at
+    }
+    TAGS {
+        int id PK
+        string name UK "NOT NULL"
+    }
+    TASK_TAGS {
+        int task_id FK "-> tasks.id, PK part"
+        int tag_id FK "-> tags.id, PK part"
+    }
+    COMMENTS {
+        int id PK
+        int task_id FK "-> tasks.id, NOT NULL"
+        int author_id FK "-> users.id, NOT NULL"
+        string body "NOT NULL"
+        datetime created_at
+    }
+```
+
+Notes on cardinality: `project_members` and `task_tags` are pure join tables with
+composite primary keys (`user_id, project_id` and `task_id, tag_id` respectively) — no surrogate `id`. `tasks.assignee_id` is nullable: a task can exist with zero assignees, which the `USERS ||--o{ TASKS` relation captures (a user is assigned to zero or many tasks).
