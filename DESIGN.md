@@ -116,3 +116,36 @@ composite primary keys (`user_id, project_id` and `task_id, tag_id` respectively
    guarantees a task is never left with a partial tag set.
 5. **Response**: the saved entity (with resolved tags) is mapped to the response DTO and
    returned as **201** with a `Location` header pointing at `/api/v1/tasks/:id`.
+
+## 4. Non-Functional Plan
+
+**Caching.** The one read worth caching is `GET /projects/:id/tasks` (the paged task
+list for a project) — it is requested on every board load and is comparatively
+expensive (join + filter + sort). It is cached by key
+`tasks:list:{projectId}:{page}:{pageSize}:{status}:{sort}` with a 30-second TTL. It is
+invalidated immediately (not just left to expire) on any `POST/PATCH/DELETE` to
+`/projects/:id/tasks` or `/tasks/:id` for that project, since a task's status or
+assignment changing is exactly what a board view needs to reflect promptly. Accepted
+cost: for up to 30 seconds after a write from a _different_ browser tab/user, a viewer
+may see a stale list — acceptable because this is a task board, not a payments ledger.
+`GET /tasks/:id` for a single task is **not** cached, because the immediate-read-after-
+write case (a user opens the task they just edited) must always be correct.
+
+**Scaling (reads vs writes).** Writes (`POST/PATCH/DELETE`) go to the primary. Reads
+are split: list/browse endpoints (`GET /projects/:id/tasks`, `GET /tags`, etc.) may be
+served from a read replica to keep primary load down as project/task counts grow.
+Accepted cost: replication lag, typically sub-second, means a replica read can be
+briefly behind the primary — the same class of staleness as the cache above. One read
+must **not** go to a replica: `GET /tasks/:id` immediately following that same user's
+own create/update of that task (read-your-writes) — the API layer routes a read to the
+primary whenever it is serving the same request/session that just wrote the row, so a
+user is never shown a "missing" task they just created.
+
+**Consistency.** The system accepts eventual consistency for list views (bounded by the
+30s cache TTL and typical sub-second replication lag) in exchange for not putting every
+read on the primary. It requires strong (primary-read) consistency for: the response
+body of a write itself, and any immediate re-fetch by the same actor of what they just
+wrote. This also bounds the N+1 problem at the API edge: `GET /projects/:id/tasks`
+loads each task's tags via a single batched query (`tag\_id IN (...)` joined through
+`task\_tags`) rather than one query per task, so the list endpoint's cost stays roughly
+constant per page regardless of how many tags a task has.
