@@ -218,3 +218,17 @@ constant per page regardless of how many tags a task has.
 | T1  | Enforce `project\_members` role checks in a shared `RolesGuard`, applied per-route with a `@Roles()` decorator.    | Check the caller's role inside every service method.    | Per-service checks let a single loaded entity answer ownership questions the guard can't (e.g. "is this the comment author"), but this domain has 20+ routes across 5 resources sharing the _same_ 4-role check — a missed check in one service is invisible until reported, while a route with no `@Roles()` decorator is visibly unprotected in code review.                                            |
 | T2  | Cache the project task-list read, invalidated on write, rather than adding a read replica for that specific query. | Add a read replica and route all task-list reads there. | A replica helps every read query uniformly but costs an entire second database and ongoing replication ops; a cache costs one Redis key per (project, page, filter) and directly targets the one query (`GET /projects/:id/tasks`) that is actually hot, per NFR1.                                                                                                                                        |
 | T3  | Offset pagination (`page`/`pageSize`) for all list endpoints.                                                      | Cursor pagination (`?cursor=`).                         | Cursor pagination is the right choice when result sets are unbounded and clients only ever page forward (e.g. a global activity feed), but a project's task list is bounded (thousands, not millions, of rows) and the UI needs to jump to an arbitrary page number — something cursor pagination cannot do. Offset's known weakness (row-shift on concurrent insert) is judged acceptable at this scale. |
+
+### 5.1 Denormalization (Challenge X3)
+
+Candidate field: `tasks.comment_count` (cached count, avoiding a `COUNT(*)` join every
+time a task list renders a comment badge). Read sped up: `GET /projects/:id/tasks`.
+Write cost accepted: every `POST /tasks/:id/comments` and
+`DELETE /comments/:id` must also update the counter — two writes instead of one.
+Mechanism: a Postgres trigger (`AFTER INSERT/DELETE ON comments`) increments/decrements
+`tasks.comment_count` in the same transaction as the comment write, so the counter can
+never drift out of sync with application code (unlike updating it from NestJS, which
+would drift if a comment were ever inserted outside the API, e.g. a migration or admin
+script). Failure mode: if the trigger itself fails, the whole transaction — including
+the comment write — rolls back, so the counter is never _silently_ wrong; the visible
+failure is a `500` on the comment write, which is preferable to an invisible drift.
