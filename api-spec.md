@@ -182,3 +182,64 @@ Errors: `400` empty body, `403` not the author, `404` not a member of the owning
 #### `DELETE /api/v1/comments/:id` — comment author, or owner/admin of the project (moderation)
 Response `204`.
 Errors: `403` neither the author nor owner/admin, `404` not a member / comment doesn't exist.
+
+## 8. Error Contract
+
+Every non-2xx response uses exactly this shape:
+
+```json
+{
+  "statusCode": 404,
+  "message": "Not Found",
+  "error": "NotFoundException",
+  "timestamp": "2026-09-01T10:15:32.000Z",
+  "path": "/api/v1/projects/99/tasks"
+}
+```
+
+For `400` validation failures, `message` is an array of field-level errors rather than a
+single string, so the frontend can map errors to form fields:
+
+**400**
+```json
+{
+  "statusCode": 400,
+  "message": ["title should not be empty", "priority must be between 1 and 5"],
+  "error": "BadRequestException",
+  "timestamp": "2026-09-01T10:15:32.000Z",
+  "path": "/api/v1/projects/42/tasks"
+}
+```
+
+**401**
+```json
+{
+  "statusCode": 401,
+  "message": "Invalid or expired access token",
+  "error": "UnauthorizedException",
+  "timestamp": "2026-09-01T10:15:32.000Z",
+  "path": "/api/v1/projects/42/tasks"
+}
+```
+
+**403**
+```json
+{
+  "statusCode": 403,
+  "message": "Your role (viewer) cannot create tasks on this project",
+  "error": "ForbiddenException",
+  "timestamp": "2026-09-01T10:15:32.000Z",
+  "path": "/api/v1/projects/42/tasks"
+}
+```
+
+**404**
+```json
+{
+  "statusCode": 404,
+  "message": "Project not found",
+  "error": "NotFoundException",
+  "timestamp": "2026-09-01T10:15:32.000Z",
+  "path": "/api/v1/projects/99/tasks"
+}
+```
