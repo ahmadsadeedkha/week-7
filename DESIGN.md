@@ -117,6 +117,54 @@ composite primary keys (`user_id, project_id` and `task_id, tag_id` respectively
 5. **Response**: the saved entity (with resolved tags) is mapped to the response DTO and
    returned as **201** with a `Location` header pointing at `/api/v1/tasks/:id`.
 
+### 3.1 Sequence diagram (Challenge X1)
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant Ctrl as Controller
+    participant Svc as TaskService
+    participant Repo as TaskRepository
+    participant DB as Postgres
+
+    C->>Ctrl: POST /api/v1/projects/42/tasks
+    Ctrl->>Ctrl: AuthGuard: verify JWT
+    alt invalid token
+        Ctrl-->>C: 401 Unauthorized
+    end
+    Ctrl->>DB: RolesGuard: SELECT role FROM project_members WHERE user_id, project_id
+    alt no membership row
+        Ctrl-->>C: 404 Not Found
+    else role = viewer
+        Ctrl-->>C: 403 Forbidden
+    end
+    Ctrl->>Ctrl: validate DTO
+    alt DTO invalid
+        Ctrl-->>C: 400 Bad Request
+    end
+    Ctrl->>Svc: create(projectId, dto, userId)
+    Svc->>DB: SELECT project WHERE id = 42
+    alt project missing
+        Svc-->>Ctrl: NotFoundException
+        Ctrl-->>C: 404 Not Found
+    end
+    opt assigneeId provided
+        Svc->>DB: SELECT project_members WHERE user_id=assigneeId
+        alt assignee not a member
+            Svc-->>Ctrl: BadRequestException
+            Ctrl-->>C: 400 Bad Request
+        end
+    end
+    Svc->>Repo: save(task, tagIds) [transaction]
+    Repo->>DB: INSERT INTO tasks
+    Repo->>DB: INSERT INTO task_tags (bulk)
+    DB-->>Repo: committed
+    Repo-->>Svc: Task entity
+    Svc-->>Ctrl: TaskResponseDto
+    Ctrl-->>C: 201 Created
+```
+
+
 ## 4. Non-Functional Plan
 
 **Caching.** The one read worth caching is `GET /projects/:id/tasks` (the paged task
