@@ -103,16 +103,16 @@ composite primary keys (`user_id, project_id` and `task_id, tag_id` respectively
 1. **Client** sends `POST /api/v1/projects/42/tasks` with a JSON body
    `{ title, description?, priority, assigneeId?, dueDate?, tagIds? }` and a bearer token.
 2. **Controller**: `AuthGuard` verifies the JWT signature/expiry → if invalid/missing, **401**.
-   `RolesGuard` loads `project\_members` for `(user\_id, project\_id=42)`; if no row exists → **404**
+   `RolesGuard` loads `project_members` for `(user_id, project_id=42)`; if no row exists → **404**
    (the project's existence is not revealed to non-members); if the row's role is `viewer` → **403**.
    The DTO is validated (`class-validator`); a malformed body → **400** before the service runs.
 3. **Service** (`TaskService.create`) confirms the project row exists (defense in depth,
    also **404** if somehow missing), and if `assigneeId` is present, confirms that user has a
-   `project\_members` row for the same project — **400** if not (a data problem, not an authz
+   `project_members` row for the same project — **400** if not (a data problem, not an authz
    problem, since the caller is already authorized). The DTO is mapped to a `Task` entity
    with `status = 'todo'` as the default.
 4. **Repository**: within a transaction, `TaskRepository.save(task)` inserts into `tasks`,
-   then if `tagIds` were supplied, bulk-inserts rows into `task\_tags`. The transaction
+   then if `tagIds` were supplied, bulk-inserts rows into `task_tags`. The transaction
    guarantees a task is never left with a partial tag set.
 5. **Response**: the saved entity (with resolved tags) is mapped to the response DTO and
    returned as **201** with a `Location` header pointing at `/api/v1/tasks/:id`.
@@ -164,6 +164,19 @@ sequenceDiagram
     Ctrl-->>C: 201 Created
 ```
 
+### 3.2 Where state lives (Challenge X2)
+
+- **Postgres** holds the durable truth: users, projects, roles, tasks, tags, comments.
+  This is the only place a role assignment can be changed.
+- **The JWT access token** carries only identity (`userId`) and an expiry — never a role.
+  Roles are looked up fresh from `project_members` on every request via `RolesGuard`,
+  so a role can never go stale inside a still-valid access token.
+- **The client** holds only what it needs to render the current screen (the fetched
+  task list, the logged-in user's name) — never a role or permission decision. The
+  client never decides whether an action is allowed; it just calls the API and reacts
+  to a `403`.
+
+Because the guard re-checks `project_members` on every request instead of trusting a claim baked into the token, revoking or downgrading a role takes effect on the very next API call — the only window where a stale permission could apply is the (much smaller) case of a still-valid _refresh_ token after a user's access is revoked entirely.
 
 ## 4. Non-Functional Plan
 
